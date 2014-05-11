@@ -6,7 +6,7 @@ use Carp 'croak';
 require Scalar::Util;
 require Data::Dumper;
 
-our $VERSION= '0.0000';
+our $VERSION= '0.001001';
 
 # ABSTRACT: Logging adapter suitable for use in a Daemontools-style logging chain
 
@@ -31,27 +31,27 @@ BEGIN {
 		my $level= $prev_level= defined $level_map{$method}? $level_map{$method} : $prev_level;
 		my $impl= ($level >= 0)
 			# Standard logging
-			? sub { $level > (shift)->{filter} and print STDERR "$method: ", @_, "\n"; }
+			? sub {
+				return unless $level > $_[0]{filter};
+				(shift)->write_msg($method, join(' ', map { !defined $_? '<undef>' : $_ } @_));
+			}
 			# Debug and trace logging
 			: sub {
 				return unless $level > $_[0]{filter};
-				my ($self, @args)= @_;
-				try {
-					print STDERR
-						join(' ', "$method:",
-							map { !defined $_? '<undef>' : !ref $_? $_ : $self->dumper->($_) } @args
-						),
-						"\n";
-				}
-				catch {
-					print STDERR
-						"error: exception while stringifying message for '$method': $_\n";
-				};
+				my $self= shift;
+				eval { $self->write_msg($method, join(' ', map { !defined $_? '<undef>' : !ref $_? $_ : $self->dumper->($_) } @_)); };
+			};
+		my $printfn=
+			sub {
+				return unless $level > $_[0]{filter};
+				my $self= shift;
+				$self->write_msg($method, sprintf((shift), map { !defined $_? '<undef>' : !ref $_? $_ : $self->dumper->($_) } @_));
 			};
 		my $test= sub { $level > (shift)->{filter} };
-		
+
 		no strict 'refs';
 		*{__PACKAGE__ . "::$method"}= $impl;
+		*{__PACKAGE__ . "::${method}f"}= $printfn;
 		*{__PACKAGE__ . "::is_$method"}= $test;
 	}
 
@@ -60,25 +60,41 @@ BEGIN {
 	for (keys %aliases) {
 		next if __PACKAGE__->can($_);
 		no strict 'refs';
-		*{__PACKAGE__ . "::$_"}= *{__PACKAGE__ . "::$aliases{$_}"};
+		*{__PACKAGE__ . "::$_"}=    *{__PACKAGE__ . "::$aliases{$_}"};
+		*{__PACKAGE__ . "::${_}f"}= *{__PACKAGE__ . "::$aliases{$_}f"};
 		*{__PACKAGE__ . "::is_$_"}= *{__PACKAGE__ . "::is_$aliases{$_}"};
 	}
 }
 
+
 has filter => ( is => 'rw', default => sub { 0 }, coerce => \&_coerce_filter_level );
-has dumper => ( is => 'rw', default => sub { \&_default_dumper } );
+has dumper => ( is => 'lazy', builder => sub { \&_default_dumper } );
+
+
+sub write_msg {
+	my ($self, $level_name, $str)= @_;
+	$str =~ s/\n/\n$level_name: /g;
+	print STDERR "$level_name: $str\n";
+}
 
 sub _default_dumper {
-	my $x= Data::Dumper->new([$_[0]])->Indent(0)->Terse(1)->Useqq(1)->Quotekeys(0)->Maxdepth(4)->Sortkeys(1)->Dump;
-	substr($x, 1020)= '...' if length $x >= 1024;
-	$x;
+	my $val= shift;
+	try {
+		Data::Dumper->new([$val])->Indent(0)->Terse(1)->Useqq(1)->Quotekeys(0)->Maxdepth(4)->Sortkeys(1)->Dump;
+	} catch {
+		my $x= "$_";
+		$x =~ s/\n//;
+		substr($x, 50)= '...' if length $x >= 50;
+		"<exception $x>";
+	};
 }
 
 sub _coerce_filter_level {
 	my $val= shift;
 	return (!defined $val || $val eq 'none')? $level_map{trace}-1
 		: Scalar::Util::looks_like_number($val)? $val
-		: exists $level_map{$val}? Slevel_map{$val}
+		: exists $level_map{$val}? $level_map{$val}
+		: ($val =~ /^debug-(\d+)$/)? $level_map{debug} - $1
 		: croak "unknown log level '$val'";
 }
 
@@ -96,9 +112,14 @@ Log::Any::Adapter::Daemontools - Logging adapter suitable for use in a Daemontoo
 
 =head1 VERSION
 
-version 0.0000_00
+version 0.001_001
 
 =head1 DESCRIPTION
+
+In the daemontools way of thinking, a daemon writes all its logging output
+to STDERR, which is a pipe to a logger process.  When writing all log info
+to a pipe, you lose the log level information.  An elegantly simple way to
+preserve this information is to prefix each line with "error:" or etc.
 
 This is a small simple module that writes logging messages to STDERR,
 prefixing each line with an identifier like "error: ", "warning: ", etc.
@@ -113,6 +134,68 @@ exception if they fail, and arguments are converted to strings howver
 they normally would if you tried printing them, on the assumption that
 if you print an object in the course of normal logging then you probably
 want the natural stringification for that type of object.
+
+=head1 ATTRIBUTES
+
+=head2 filter
+
+  use Log::Any::Adapter 'Daemontools', filter => 0;
+  use Log::Any::Adapter 'Daemontools', filter => 'info';
+  use Log::Any::Adapter "Daemontools', filter => 'debug';
+  use Log::Any::Adapter "Daemontools', filter => "debug-$ENV{DEBUG}";
+
+Messages equal to or less than the level of filter are suppressed.
+
+filter may be an integer (0 is info, 1 is notice, -1 is debug, etc) or a level
+name like 'info', 'debug', etc, or a level alias, the string 'none' or undef
+which do not suppress anything, or a special notation of /debug-(\d+)/, where
+a number will be subtracted from the debug level (this is useful for quickly
+setting a log level from $ENV{DEBUG})
+
+The default filter is 0, meaning 'info' and below are suppressed.
+
+=head2 dumper
+
+  use Log::Any::Adapter 'Daemontools', dumper => sub { my $val=shift; ... };
+
+Use a custom dumper function for converting perl data to strings.
+The dumper is only used for the "*f()" formatting functions, and for log
+levels 'debug' and 'trace'.  All normal logging will stringify the object
+in the normal way.
+
+=head1 METHODS
+
+This logger has a method for all of the standard Log::Any methods (as of the
+time this was written... I did not inherit from the Log::Any::Adapter::Core
+base class)
+
+=head1 new
+
+  $class->new( filter => 'notice', dumper => sub { ... } )
+  
+  use Log::Any::Adapter 'Daemonproxy', filter => 'notice', dumper => sub { ... };
+  
+  Log::Any::Adapter->set('Daemonproxy', filter => 'notice', dumper => sub { ... });
+
+Construct a new instance of the logger, in a variety of ways.  Accepted
+paramters are currently 'filter' and 'dumper'.
+
+=head2 write_msg
+
+  $self->write_msg( $level_name, $message_string )
+
+This is an internal method which all the other logging methods call.  You can
+override it if you want to create a derived logger that handles line wrapping
+differently, or write to a file handle other than STDERR.
+
+=head2 _default_dumper
+
+  _default_dumper( $value )
+
+This is a function which dumps a value in a human readable format.  Currently
+it uses Data::Dumper with a max depth of 4, but might change in the future.
+
+This is the default value for the 'dumper' attribute.
 
 =head1 AUTHOR
 
