@@ -112,7 +112,7 @@ Log::Any::Adapter::Daemontools - Logging adapter suitable for use in a Daemontoo
 
 =head1 VERSION
 
-version 0.001_001
+version 0.001002
 
 =head1 DESCRIPTION
 

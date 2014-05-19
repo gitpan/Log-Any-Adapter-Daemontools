@@ -3,23 +3,24 @@ abstract: 'Logger suitable for use with DaemonTools style logging'
 author:
   - 'Michael Conrad <mike@nrdvana.net>'
 build_requires:
-  Log::Any: 0
-  Test::More: 0
+  Log::Any: '0'
+  Test::More: '0'
 configure_requires:
-  ExtUtils::MakeMaker: 6.30
+  ExtUtils::MakeMaker: '6.30'
 dynamic_config: 0
-generated_by: 'Dist::Zilla version 5.015, CPAN::Meta::Converter version 2.141170'
+generated_by: 'Dist::Zilla version 5.017, CPAN::Meta::Converter version 2.141170'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
-  version: 1.4
+  version: '1.4'
 name: Log-Any-Adapter-Daemontools
 requires:
-  Carp: 0
-  Data::Dumper: 0
-  Moo: 0.009009
-  Scalar::Util: 0
-  Try::Tiny: 0
-  strict: 0
-  warnings: 0
-version: 0.001_001
+  Carp: '0'
+  Data::Dumper: '0'
+  Log::Any::Adapter: '0'
+  Moo: '0.009009'
+  Scalar::Util: '0'
+  Try::Tiny: '0'
+  strict: '0'
+  warnings: '0'
+version: '0.001002'
